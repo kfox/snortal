@@ -35,13 +35,13 @@
 // min/max x/y offsets
 .var min_x = 0
 .var max_x = 39
-.var min_y = 0
+.var min_y = 1
 .var max_y = 24
 
 // snake characters
 .var space = $20
 .var body  = $51
-.var apple = $53
+.var snack = $53
 .var head  = $57
 
 // game-specific memory locations
@@ -68,6 +68,9 @@ init:
   mov #0 : snake_length
   mov #127 : last_joystick_value
 
+  jsr reset_score
+  jsr draw_banner
+
   jsr draw_initial_snake
   dec snake_tail_segment_offset // ensure snake offsets are correct for the first move
   lda snake_head_segment_offset
@@ -75,7 +78,7 @@ init:
   sty snake_segment_xpos
   stx snake_segment_ypos
 
-  jsr place_apple
+  jsr draw_snake_snack
 
   jmp game_loop
 
@@ -94,10 +97,38 @@ init_snake_segments:
 
   rts
 
+draw_banner:
+  ldx #$0
+  clc
+
+!:
+  lda banner_text, x
+  adc #128 // use reverse text
+  sta $0400, x
+  lda #DARK_GRAY
+  sta $d800, x
+  inx
+  cpx #40
+  bne !-
+
+  rts
+
 .segment Code "Main"
 game_loop:
   jsr read_joystick_2
   jmp game_loop
+
+reset_score:
+  ldx #0
+  lda #0
+
+!:
+  sta score, x
+  inx
+  cpx #3
+  bne !-
+
+  rts
 
 draw_initial_snake:
   .for (var offset=0; offset<5; offset++) {
@@ -190,13 +221,13 @@ move_snake:
   jmp game_over
 
 !:
-  // did the snake eat something yummy, or not?
-  cmp #apple
+  // snake snack snatched?
+  cmp #snack
   bne erase_tail // no, move along
+  jsr increase_score
   inc snake_length
   lda snake_length
-  sta $0427
-  jsr place_apple // yes, grow and place a new snake snack
+  jsr draw_snake_snack // yes, place a new snake snack
   jmp !+
 
 erase_tail:
@@ -313,6 +344,11 @@ delay:
   jmp game_loop
 
 get_screen_loc_contents:
+  // expects:
+  // the row in the x register
+  // the column in the y register
+  // returns:
+  // contents of that screen ram location in accumulator
   lda screen_offsets.lo, x
   sta screen_loc_ptr
   lda screen_offsets.hi, x
@@ -321,26 +357,83 @@ get_screen_loc_contents:
   lda (screen_loc_ptr), y
   rts
 
-place_apple:
-  // pick a column
-  rand(39)
-  tay
+find_empty_screen_location:
+  rand(min_x, max_x) // pick a column
+  tay                // store column in y register
+  rand(min_y, max_y) // pick a row
+  tax                // store row in x register
 
-  // pick a row
-  rand(24)
-  tax
+  jsr get_screen_loc_contents    // what's at that location?
+  cmp #space                     // is it an empty space?
+  bne find_empty_screen_location // if not, try again
 
-  // check if the screen location is occupied
-  jsr get_screen_loc_contents
-  cmp #space
-  bne place_apple
+  rts
 
-  // draw the apple
-  lda #apple
+draw_snake_snack:
+  jsr find_empty_screen_location
+
+  // draw the snack
+  lda #snack
   sta (screen_loc_ptr), y
   add16 screen_loc_ptr : #$d400
   lda #RED
   sta (screen_loc_ptr), y
+  rts
+
+increase_score:
+  sed // we're using BCD for scoring
+  clc
+
+  lda score
+  adc #$10 // add 10 to the current score
+  sta score
+  bcc !+
+
+  lda score + 1
+  adc #$00
+  sta score + 1
+  bcc !+
+
+  lda score + 2
+  adc #$00
+  sta score + 2
+
+!:
+  cld
+
+  jsr display_score
+
+  rts
+
+display_score:
+  ldy #5 // screen offset, starting with the least-significant digit
+  ldx #0 // score byte index (0-2)
+
+score_loop:
+  // get the lowest 4 bits of the current score byte and draw it
+  lda score, x
+  and #$0f
+  jsr draw_digit
+
+  // now do the same thing with the upper 4 bits of the byte
+  lda score, x
+  lsr
+  lsr
+  lsr
+  lsr
+  jsr draw_digit
+
+  inx
+  cpx #3
+  bne score_loop
+
+  rts
+
+draw_digit:
+  clc
+  adc #48 + 128 // "0" - "9", reverse mode
+  sta $0422, y  // screen location for score display
+  dey
   rts
 
 game_over:
@@ -375,12 +468,12 @@ exit:
 //
 
 .segment Data "Screen Offsets"
-// screen_offsets is a list of addresses for the first location of every row
+// this is a list of offsets for the beginning of each row in screen RAM
 screen_offsets: .lohifill 25, 40 * i
 
 .segment Data "Text Strings"
-welcome_text:
-  .text "WELCOME TO SNORTAL"
+banner_text:
+  .text "WELCOME TO SNORTAL!        SCORE: 000000"
   .byte $ff
 press_fire_text:
   .text "PRESS FIRE"
@@ -393,12 +486,14 @@ game_over_text:
 // snake segments are from tail to head
 snake_segments_x: .fill 256, 16 + i
 snake_segments_y: .fill 256, 12
+
 snake_direction: .byte right
 old_snake_direction: .byte right
 snake_head_segment_offset: .byte 4
 snake_tail_segment_offset: .byte 0
 snake_length: .byte 5
 last_joystick_value: .byte 127
+score: .byte 0, 0, 0
 
 //
 // functions, macros, pseudocommands
@@ -416,7 +511,7 @@ last_joystick_value: .byte 127
   bne !-
 }
 
-.macro rand(max) {
+.macro rand(min, max) {
   // generates a random-ish number between 0 and max, inclusive
   // semi-"optimized" for max = 24 or max = 39
   .var mask = [max < 32] ? %11111 : %111111
@@ -426,7 +521,9 @@ last_joystick_value: .byte 127
   sbc CIA1_TAHI
   and #mask
   cmp #max + 1
-  bpl !- // regenerate a random number if number >= max + 1
+  bpl !- // try again if number >= max + 1
+  cmp #min
+  bmi !- // try again if number < min
 }
 
 .pseudocommand mov source : dest {
