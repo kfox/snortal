@@ -20,11 +20,11 @@
 .label CIA1_TAHI = $dc05
 
 // joystick 2 values
-.var joy2_fire = $6f
-.var joy2_left = $7b
+.var joy2_fire  = $6f
+.var joy2_left  = $7b
 .var joy2_right = $77
-.var joy2_up = $7e
-.var joy2_down = $7d
+.var joy2_up    = $7e
+.var joy2_down  = $7d
 
 // directions
 .var up    = %00001
@@ -38,17 +38,19 @@
 .var min_y = 1
 .var max_y = 24
 
-// snake characters
-.var space = $20
-.var body  = $51
-.var snack = $53
-.var head  = $57
+// characters
+.var space         = $20
+.var body          = $51
+.var snack         = $53
+.var head          = $57
+.var orange_portal = $66
+.var blue_portal   = $e6
 
 // game-specific memory locations
 .label snake_segment_char = $02 // character to draw
 .label snake_segment_xpos = $fb // min_x - max_x
 .label snake_segment_ypos = $fc // min_y - max_y
-.label screen_loc_ptr  = $fd    // low byte of word ($fd-$fe)
+.label screen_loc_ptr     = $fd // low byte of word ($fd-$fe)
 
 .segment Code "Init"
 init:
@@ -67,6 +69,7 @@ init:
   mov #0 : snake_tail_segment_offset
   mov #0 : snake_length
   mov #127 : last_joystick_value
+  mov #0 : snake_segments_in_transit
 
   jsr reset_score
   jsr draw_banner
@@ -79,6 +82,8 @@ init:
   stx snake_segment_ypos
 
   jsr draw_snake_snack
+  jsr draw_orange_portal
+  jsr draw_blue_portal
 
   jmp game_loop
 
@@ -215,26 +220,52 @@ move_snake:
   ldy snake_segment_xpos
   jsr get_screen_loc_contents
 
-  // did the snake try to eat itself? bad idea.
-  cmp #body
-  bne !+
-  jmp game_over
-
-!:
-  // snake snack snatched?
-  cmp #snack
-  bne erase_tail // no, move along
-  jsr increase_score
-  inc snake_length
-  lda snake_length
-  jsr draw_snake_snack // yes, place a new snake snack
-  jmp !+
-
-erase_tail:
+check_move_space:
+  cmp #space
+  bne check_move_orange_portal
   inc snake_tail_segment_offset
   jsr erase_snake_tail
+  jmp check_portal_transit
+
+check_move_orange_portal:
+  cmp #orange_portal
+  bne check_move_blue_portal
+  jsr handle_orange_portal_transit
+  jmp check_portal_transit
+
+check_move_blue_portal:
+  cmp #blue_portal
+  bne check_move_snack
+  jsr handle_blue_portal_transit
+  jmp check_portal_transit
+
+check_move_snack:
+  cmp #snack
+  bne !+
+  jsr increase_score
+  inc snake_length
+  jsr draw_snake_snack
+  jmp check_portal_transit
 
 !:
+  // snake tried to eat itself
+  jmp game_over
+
+check_portal_transit:
+  lda snake_segments_in_transit
+  cmp #0
+  beq check_portal_redraw
+  dec snake_segments_in_transit
+  jmp move_head
+
+check_portal_redraw:
+  rand(1, 20) // 5% chance to redraw portals
+  cmp #1
+  bne move_head
+  jsr redraw_portals
+  jmp move_head
+
+move_head:
   mov #body : snake_segment_char
   jsr draw_snake_head
 
@@ -247,6 +278,55 @@ erase_tail:
 
   mov #head : snake_segment_char
   jsr draw_snake_head
+  jmp game_loop
+
+redraw_portals:
+  jsr erase_portals
+  jsr draw_orange_portal
+  jsr draw_blue_portal
+  rts
+
+handle_blue_portal_transit:
+  ldy orange_portal_x
+  ldx orange_portal_y
+  jmp handle_portal_transit
+
+handle_orange_portal_transit:
+  ldy blue_portal_x
+  ldx blue_portal_y
+  jmp handle_portal_transit
+
+handle_portal_transit:
+  sty snake_segment_xpos
+  stx snake_segment_ypos
+
+  lda snake_direction
+  cmp #right
+  bne !+
+  jsr portal_transit_initiated
+  jmp check_right
+
+!:
+  lda snake_direction
+  cmp #left
+  bne !+
+  jsr portal_transit_initiated
+  jmp check_left
+
+!:
+  lda snake_direction
+  cmp #up
+  bne !+
+  jsr portal_transit_initiated
+  jmp check_up
+
+!:
+  lda snake_direction
+  jsr portal_transit_initiated
+  jmp check_down
+
+portal_transit_initiated:
+  mov snake_length : snake_segments_in_transit
   rts
 
 check_left:
@@ -265,8 +345,7 @@ check_left:
   dec snake_segment_xpos
   mov snake_direction : old_snake_direction
   mov #left : snake_direction
-  jsr move_snake
-  rts
+  jmp move_snake
 
 check_right:
   lda snake_direction
@@ -284,8 +363,7 @@ check_right:
   inc snake_segment_xpos
   mov snake_direction : old_snake_direction
   mov #right : snake_direction
-  jsr move_snake
-  rts
+  jmp move_snake
 
 check_up:
   lda snake_direction
@@ -303,8 +381,7 @@ check_up:
   dec snake_segment_ypos
   mov snake_direction : old_snake_direction
   mov #up : snake_direction
-  jsr move_snake
-  rts
+  jmp move_snake
 
 check_down:
   lda snake_direction
@@ -322,8 +399,7 @@ check_down:
   inc snake_segment_ypos
   mov snake_direction : old_snake_direction
   mov #down : snake_direction
-  jsr move_snake
-  rts
+  jmp move_snake
 
 alternate_delay:
   lda RASTER
@@ -378,6 +454,53 @@ draw_snake_snack:
   add16 screen_loc_ptr : #$d400
   lda #RED
   sta (screen_loc_ptr), y
+  rts
+
+draw_orange_portal:
+  jsr find_empty_screen_location
+  stx orange_portal_y
+  sty orange_portal_x
+
+  lda #orange_portal
+  sta (screen_loc_ptr), y
+  add16 screen_loc_ptr : #$d400
+  lda #ORANGE
+  sta (screen_loc_ptr), y
+  rts
+
+draw_blue_portal:
+  jsr find_empty_screen_location
+  stx blue_portal_y
+  sty blue_portal_x
+
+  lda #blue_portal
+  sta (screen_loc_ptr), y
+  add16 screen_loc_ptr : #$d400
+  lda #LIGHT_BLUE
+  sta (screen_loc_ptr), y
+  rts
+
+erase_portals:
+  ldx blue_portal_y
+  ldy blue_portal_x
+  lda screen_offsets.lo, x
+  sta screen_loc_ptr
+  lda screen_offsets.hi, x
+  ora #$04
+  sta screen_loc_ptr + 1
+  lda #space
+  sta (screen_loc_ptr), y
+
+  ldx orange_portal_y
+  ldy orange_portal_x
+  lda screen_offsets.lo, x
+  sta screen_loc_ptr
+  lda screen_offsets.hi, x
+  ora #$04
+  sta screen_loc_ptr + 1
+  lda #space
+  sta (screen_loc_ptr), y
+
   rts
 
 increase_score:
@@ -494,6 +617,11 @@ snake_tail_segment_offset: .byte 0
 snake_length: .byte 5
 last_joystick_value: .byte 127
 score: .byte 0, 0, 0
+blue_portal_x: .byte 0
+blue_portal_y: .byte 0
+orange_portal_x: .byte 0
+orange_portal_y: .byte 0
+snake_segments_in_transit: .byte 0
 
 //
 // functions, macros, pseudocommands
