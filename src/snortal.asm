@@ -10,47 +10,45 @@
 ]
 
 // KERNAL memory locations
-.label SCREEN_RAM = $0400
-.label RASTER = $d012
+.label SCREEN_RAM   = $0400
+.label RASTER       = $d012
 .label BORDER_COLOR = $d020
-.label BG_COLOR = $d021
-.label COLOR_RAM = $d800
-.label JOY2   = $dc00
-.label CIA1_TALO = $dc04
-.label CIA1_TAHI = $dc05
+.label BG_COLOR     = $d021
+.label COLOR_RAM    = $d800
+.label JOY2         = $dc00
+.label CIA1_TALO    = $dc04
+.label CIA1_TAHI    = $dc05
 
 // joystick 2 values
-.var joy2_fire  = $6f
-.var joy2_left  = $7b
-.var joy2_right = $77
-.var joy2_up    = $7e
-.var joy2_down  = $7d
-
-// directions
-.var up    = %00001
-.var down  = %00010
-.var left  = %00100
-.var right = %01000
+.const fire  = $6f
+.const left  = $7b
+.const right = $77
+.const up    = $7e
+.const down  = $7d
+.const idle  = $7f
 
 // min/max x/y offsets
-.var min_x = 0
-.var max_x = 39
-.var min_y = 1
-.var max_y = 24
+.const min_x = 0
+.const max_x = 39
+.const min_y = 1  // reserve the first screen row for game info
+.const max_y = 24
 
 // characters
-.var space         = $20
-.var body          = $51
-.var snack         = $53
-.var head          = $57
-.var orange_portal = $66
-.var blue_portal   = $e6
+.const space         = $20
+.const body          = $51
+.const snack         = $53
+.const head          = $57
+.const orange_portal = $66
+.const blue_portal   = $e6
 
 // game-specific memory locations
 .label snake_segment_char = $02 // character to draw
-.label snake_segment_xpos = $fb // min_x - max_x
-.label snake_segment_ypos = $fc // min_y - max_y
+.label snake_segment_xpos = $fb // min_x to max_x
+.label snake_segment_ypos = $fc // min_y to max_y
 .label screen_loc_ptr     = $fd // low byte of word ($fd-$fe)
+
+// other variables
+.const initial_delay = 27
 
 .segment Code "Init"
 init:
@@ -60,7 +58,7 @@ init:
   sta BORDER_COLOR
 
   cls(SCREEN_RAM, space) // clear the screen
-  cls(COLOR_RAM, GREEN)  // fill color RAM with green
+  cls(COLOR_RAM, GREEN)
 
   jsr init_snake_segments
 
@@ -68,8 +66,8 @@ init:
   mov #right : old_snake_direction
   mov #0 : snake_tail_segment_offset
   mov #0 : snake_length
-  mov #127 : last_joystick_value
   mov #0 : snake_segments_in_transit
+  mov #initial_delay : delay_time
 
   jsr reset_score
   jsr draw_banner
@@ -103,7 +101,7 @@ init_snake_segments:
   rts
 
 draw_banner:
-  ldx #$0
+  ldx #0
   clc
 
 !:
@@ -121,6 +119,7 @@ draw_banner:
 .segment Code "Main"
 game_loop:
   jsr read_joystick_2
+  jsr delay
   jmp game_loop
 
 reset_score:
@@ -191,28 +190,30 @@ draw_snake_segment:
 
 read_joystick_2:
   lda JOY2
-  cmp last_joystick_value
-  bne !+
-  rts
-!:
-  sta last_joystick_value
+  cmp #idle
+  bne check_snake_direction
 
-  cmp #joy2_up
+move_along:
+  lda snake_direction
+
+check_snake_direction:
+  cmp #up
   bne !+
   jmp check_up
 !:
-  cmp #joy2_down
+  cmp #down
   bne !+
   jmp check_down
 !:
-  cmp #joy2_left
+  cmp #left
   bne !+
   jmp check_left
 !:
-  cmp #joy2_right
+  cmp #right
   bne !+
   jmp check_right
 !:
+  jmp move_along
   rts
 
 move_snake:
@@ -259,7 +260,7 @@ check_portal_transit:
   jmp move_head
 
 check_portal_redraw:
-  rand(1, 20) // 5% chance to redraw portals
+  rand(1, 36)
   cmp #1
   bne move_head
   jsr redraw_portals
@@ -278,7 +279,7 @@ move_head:
 
   mov #head : snake_segment_char
   jsr draw_snake_head
-  jmp game_loop
+  rts
 
 redraw_portals:
   jsr erase_portals
@@ -401,23 +402,15 @@ check_down:
   mov #down : snake_direction
   jmp move_snake
 
-alternate_delay:
-  lda RASTER
-  cmp #$ff
-  bne alternate_delay
-  dey
-  bne alternate_delay
-  rts
-
 delay:
-  lda snake_length
-  adc snake_length
+  ldy delay_time
 !:
-  nop
-  nop
-  adc #1
+  ldx RASTER
+  cpx #$ff
   bne !-
-  jmp game_loop
+  dey
+  bne !-
+  rts
 
 get_screen_loc_contents:
   // expects:
@@ -512,6 +505,7 @@ increase_score:
   sta score
   bcc !+
 
+  dec delay_time
   lda score + 1
   adc #$00
   sta score + 1
@@ -560,27 +554,26 @@ draw_digit:
   rts
 
 game_over:
-  cls(SCREEN_RAM, space)
+  cls(COLOR_RAM, DARK_GRAY)
   ldx #$0
 
 !:
   lda game_over_text, x
-  cmp #$ff
   beq wait_for_fire_button
   sta $05ee, x
   lda press_fire_text, x
   sta $063e, x
-  lda #WHITE
+  lda #RED
   sta $d9ee, x
   sta $da3e, x
   inx
   jmp !-
 
 wait_for_fire_button:
-  jsr alternate_delay
+  jsr delay
 !:
   lda JOY2
-  cmp #joy2_fire
+  cmp #fire
   bne !-
   jmp init
 
@@ -597,13 +590,13 @@ screen_offsets: .lohifill 25, 40 * i
 .segment Data "Text Strings"
 banner_text:
   .text "WELCOME TO SNORTAL!        SCORE: 000000"
-  .byte $ff
+  .byte 0
 press_fire_text:
   .text "PRESS FIRE"
-  .byte $ff
+  .byte 0
 game_over_text:
   .text "GAME OVER!"
-  .byte $ff
+  .byte 0
 
 .segment Variables
 // snake segments are from tail to head
@@ -615,13 +608,13 @@ old_snake_direction: .byte right
 snake_head_segment_offset: .byte 4
 snake_tail_segment_offset: .byte 0
 snake_length: .byte 5
-last_joystick_value: .byte 127
 score: .byte 0, 0, 0
 blue_portal_x: .byte 0
 blue_portal_y: .byte 0
 orange_portal_x: .byte 0
 orange_portal_y: .byte 0
 snake_segments_in_transit: .byte 0
+delay_time: .byte 0
 
 //
 // functions, macros, pseudocommands
