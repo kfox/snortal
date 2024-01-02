@@ -1,54 +1,21 @@
 .encoding "screencode_upper"
 .segmentdef Code [start=$0840]
-.segmentdef Data [startAfter="Code", align=$100]
-.segmentdef Variables [startAfter="Data", align=$100, virtual]
+.segmentdef Arrays [startAfter="Code", align=$100]
+.segmentdef Strings [startAfter="Arrays", align=$100]
+.segmentdef Variables [startAfter="Strings", align=$100, virtual]
 .file [
   name="%o.prg",
-  segments="Code,Data",
+  segments="Code,Arrays,Strings",
   modify="BasicUpstart",
   _start=$0840
 ]
 
-// KERNAL memory locations
-.label SCREEN_RAM   = $0400
-.label RASTER       = $d012
-.label BORDER_COLOR = $d020
-.label BG_COLOR     = $d021
-.label COLOR_RAM    = $d800
-.label JOY2         = $dc00
-.label CIA1_TALO    = $dc04
-.label CIA1_TAHI    = $dc05
-
-// joystick 2 values
-.const fire  = $6f
-.const left  = $7b
-.const right = $77
-.const up    = $7e
-.const down  = $7d
-.const idle  = $7f
-
-// min/max x/y offsets
-.const min_x = 0
-.const max_x = 39
-.const min_y = 1  // reserve the first screen row for game info
-.const max_y = 24
-
-// characters
-.const space         = $20
-.const body          = $51
-.const snack         = $53
-.const head          = $57
-.const orange_portal = $66
-.const blue_portal   = $e6
-
-// game-specific memory locations
-.label snake_segment_char = $02 // character to draw
-.label snake_segment_xpos = $fb // min_x to max_x
-.label snake_segment_ypos = $fc // min_y to max_y
-.label screen_loc_ptr     = $fd // low byte of word ($fd-$fe)
-
-// other variables
-.const initial_delay = 27
+#import "labels.asm"
+#import "macros.asm"
+#import "strings.asm"
+#import "constants.asm"
+#import "arrays.asm"
+#import "variables.asm"
 
 .segment Code "Init"
 init:
@@ -65,6 +32,7 @@ init:
   mov #right : snake_direction
   mov #right : old_snake_direction
   mov #0 : snake_tail_segment_offset
+  mov #0 : snake_body_segment_char_offset
   mov #0 : snake_length
   mov #0 : snake_segments_in_transit
   mov #initial_delay : delay_time
@@ -138,10 +106,9 @@ draw_initial_snake:
   .for (var offset=0; offset<5; offset++) {
     lda #offset
     sta snake_head_segment_offset
-    .var char = offset < 4 ? body : head
+    .var char = offset < 4 ? $43 : head
     mov #char : snake_segment_char
     jsr draw_snake_head
-    inc snake_length
   }
   rts
 
@@ -224,8 +191,8 @@ move_snake:
 check_move_space:
   cmp #space
   bne check_move_orange_portal
-  inc snake_tail_segment_offset
   jsr erase_snake_tail
+  inc snake_tail_segment_offset
   jmp check_portal_transit
 
 check_move_orange_portal:
@@ -267,7 +234,7 @@ check_portal_redraw:
   jmp move_head
 
 move_head:
-  mov #body : snake_segment_char
+  jsr set_new_snake_segment
   jsr draw_snake_head
 
   inc snake_head_segment_offset
@@ -279,6 +246,94 @@ move_head:
 
   mov #head : snake_segment_char
   jsr draw_snake_head
+  rts
+
+set_new_snake_segment:
+  lda old_snake_direction
+  eor snake_direction
+  bne reset_body_segment_char_offset
+
+  // up again
+  lda old_snake_direction
+  cmp #up
+  bne !+
+  jsr get_next_vertical_body_segment
+  // mov #$42 : snake_segment_char
+  rts
+
+!:
+  // down again
+  cmp #down
+  bne !+
+  jsr get_next_vertical_body_segment
+  // mov #$42 : snake_segment_char
+  rts
+
+!:
+  // left again or right again
+  jsr get_next_horizontal_body_segment
+  // mov #$43 : snake_segment_char
+  rts
+
+get_next_vertical_body_segment:
+  ldx snake_body_segment_char_offset
+  lda vertical_body_segment_chars, x
+  sta snake_segment_char
+  jsr inc_body_segment_offset
+  rts
+
+get_next_horizontal_body_segment:
+  ldx snake_body_segment_char_offset
+  lda horizontal_body_segment_chars, x
+  sta snake_segment_char
+  jsr inc_body_segment_offset
+  rts
+
+inc_body_segment_offset:
+  inc snake_body_segment_char_offset
+  lda snake_body_segment_char_offset
+  cmp #4
+  bne !+
+  lda #0
+  sta snake_body_segment_char_offset
+
+!:
+  rts
+
+reset_body_segment_char_offset:
+  ldx #0
+  stx snake_body_segment_char_offset
+
+check_up_left:
+  cmp #up_left
+  bne check_up_right
+  //
+  mov #$56 : snake_segment_char
+  rts
+
+check_up_right:
+  cmp #up_right
+  bne check_down_left
+  //
+  mov #$56 : snake_segment_char
+  rts
+
+check_down_left:
+  cmp #down_left
+  bne check_down_right
+  //
+  mov #$56 : snake_segment_char
+  rts
+
+check_down_right:
+  cmp #down_right
+  bne !+
+  //
+  mov #$56 : snake_segment_char
+  rts
+
+!:
+  mov #$3f : snake_segment_char
   rts
 
 redraw_portals:
@@ -578,108 +633,3 @@ wait_for_fire_button:
   jmp init
 
 exit:
-
-//
-// data
-//
-
-.segment Data "Screen Offsets"
-// this is a list of offsets for the beginning of each row in screen RAM
-screen_offsets: .lohifill 25, 40 * i
-
-.segment Data "Text Strings"
-banner_text:
-  .text "WELCOME TO SNORTAL!        SCORE: 000000"
-  .byte 0
-press_fire_text:
-  .text "PRESS FIRE"
-  .byte 0
-game_over_text:
-  .text "GAME OVER!"
-  .byte 0
-
-.segment Variables
-// snake segments are from tail to head
-snake_segments_x: .fill 256, 16 + i
-snake_segments_y: .fill 256, 12
-
-snake_direction: .byte right
-old_snake_direction: .byte right
-snake_head_segment_offset: .byte 4
-snake_tail_segment_offset: .byte 0
-snake_length: .byte 5
-score: .byte 0, 0, 0
-blue_portal_x: .byte 0
-blue_portal_y: .byte 0
-orange_portal_x: .byte 0
-orange_portal_y: .byte 0
-snake_segments_in_transit: .byte 0
-delay_time: .byte 0
-
-//
-// functions, macros, pseudocommands
-//
-
-.macro cls(screen, fillchar) {
-  lda #fillchar
-  ldx #0
-!:
-  sta screen, x
-  sta screen + $100, x
-  sta screen + $200, x
-  sta screen + $300, x
-  inx
-  bne !-
-}
-
-.macro rand(min, max) {
-  // generates a random-ish number between 0 and max, inclusive
-  // semi-"optimized" for max = 24 or max = 39
-  .var mask = [max < 32] ? %11111 : %111111
-!:
-  lda RASTER
-  eor CIA1_TALO
-  sbc CIA1_TAHI
-  and #mask
-  cmp #max + 1
-  bpl !- // try again if number >= max + 1
-  cmp #min
-  bmi !- // try again if number < min
-}
-
-.pseudocommand mov source : dest {
-  lda source
-  sta dest
-}
-
-.function _16bit_nextArgument(arg) {
-  .if (arg.getType()==AT_IMMEDIATE)
-    .return CmdArgument(arg.getType(),>arg.getValue())
-  .return CmdArgument(arg.getType(),arg.getValue()+1)
-}
-
-.pseudocommand mov16 source : dest {
-  lda source
-  sta dest
-  lda _16bit_nextArgument(source)
-  sta _16bit_nextArgument(dest)
-}
-
-.pseudocommand add16 arg1 : arg2 : target {
-  .if (target.getType()==AT_NONE) .eval target=arg1
-  clc
-  lda arg1
-  adc arg2
-  sta target
-  lda _16bit_nextArgument(arg1)
-  adc _16bit_nextArgument(arg2)
-  sta _16bit_nextArgument(target)
-}
-
-.pseudocommand dec16 arg {
-  lda arg
-  bne !+
-  dec _16bit_nextArgument(arg)
-!:
-  dec arg
-}
