@@ -1,8 +1,8 @@
 .encoding "screencode_upper"
 .segmentdef Code [start=$0840]
 .segmentdef Arrays [startAfter="Code", align=$100]
-.segmentdef Strings [startAfter="Arrays", align=$100]
-.segmentdef Variables [startAfter="Strings", align=$100, virtual]
+.segmentdef Strings [startAfter="Arrays"]
+.segmentdef Variables [startAfter="Strings", virtual]
 .file [
   name="%o.prg",
   segments="Code,Arrays,Strings",
@@ -307,32 +307,56 @@ reset_body_segment_char_offset:
 check_up_left:
   cmp #up_left
   bne check_up_right
-  //
-  mov #$56 : snake_segment_char
+  lda old_snake_direction
+  cmp #up
+  bne !+
+  mov #$49 : snake_segment_char
+  rts
+
+!:
+  mov #$4a : snake_segment_char
   rts
 
 check_up_right:
   cmp #up_right
   bne check_down_left
-  //
-  mov #$56 : snake_segment_char
+  lda old_snake_direction
+  cmp #up
+  bne !+
+  mov #$55 : snake_segment_char
+  rts
+
+!:
+  mov #$4b : snake_segment_char
   rts
 
 check_down_left:
   cmp #down_left
   bne check_down_right
-  //
-  mov #$56 : snake_segment_char
+  lda old_snake_direction
+  cmp #down
+  bne !+
+  mov #$4b : snake_segment_char
+  rts
+
+!:
+  mov #$55 : snake_segment_char
   rts
 
 check_down_right:
   cmp #down_right
+  bne unknown_snake_direction
+  lda old_snake_direction
+  cmp #down
   bne !+
-  //
-  mov #$56 : snake_segment_char
+  mov #$4a : snake_segment_char
   rts
 
 !:
+  mov #$49 : snake_segment_char
+  rts
+
+unknown_snake_direction:
   mov #$3f : snake_segment_char
   rts
 
