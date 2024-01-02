@@ -26,12 +26,6 @@
 .const head          = $57
 .const orange_portal = $66
 .const blue_portal   = $e6
-.const body_vert1    = $47
-.const body_vert2    = $42
-.const body_vert3    = $48
-.const body_horiz1   = $44
-.const body_horiz2   = $43
-.const body_horiz3   = $46
 
 // other variables
 .const initial_delay = 27
