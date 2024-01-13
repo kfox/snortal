@@ -11,7 +11,7 @@
 .label CIA1_TAHI    = $dc05
 
 // game-specific memory locations
-.label snake_segment_char = $02 // character to draw
+.label char_to_draw       = $02 // character to draw
 .label snake_segment_xpos = $fb // min_x to max_x
 .label snake_segment_ypos = $fc // min_y to max_y
 .label screen_loc_ptr     = $fd // low byte of word ($fd-$fe)

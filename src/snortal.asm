@@ -1,14 +1,25 @@
 .encoding "screencode_upper"
+
 .segmentdef Code [start=$0840]
 .segmentdef Arrays [startAfter="Code", align=$100]
 .segmentdef Strings [startAfter="Arrays"]
 .segmentdef Variables [startAfter="Strings", virtual]
+
 .file [
   name="%o.prg",
   segments="Code,Arrays,Strings",
   modify="BasicUpstart",
   _start=$0840
 ]
+
+// .disk [filename="Snortal.d64", name="SNORTAL", id="2024!" ]
+// {
+//   [name="----------------", type="rel"                        ],
+//   [name="SNORTAL", type="prg", segments="Code,Arrays,Strings" ],
+//   [name="----------------", type="rel"                        ],
+//   [name="HIGH SCORE", type="seq", segments="High_Score"       ],
+//   [name="----------------", type="rel"                        ],
+// }
 
 #import "labels.asm"
 #import "macros.asm"
@@ -17,28 +28,48 @@
 #import "arrays.asm"
 #import "variables.asm"
 
+.segment Code "PreInit"
+pre_init:
+  mov #WAIT_FOR_FIRE : game_mode
+
+load_high_score:
+  // TODO: replace this with a disk load routine
+  lda #0
+  ldx #0
+!:
+  sta high_score, x
+  inx
+  cpx #3
+  bne !-
+
 .segment Code "Init"
 init:
-  lda #BLACK
-  sta BG_COLOR
-  lda #DARK_GRAY
-  sta BORDER_COLOR
+  mov #BLACK : BG_COLOR
+  mov #DARK_GRAY : BORDER_COLOR
 
   cls(SCREEN_RAM, space) // clear the screen
   cls(COLOR_RAM, GREEN)
 
+  lda game_mode
+  cmp #WAIT_FOR_FIRE
+  bne !+
+
+  mov #PLAY : game_mode
+  jsr draw_press_fire_to_begin
+  jmp wait_for_fire_to_restart
+
+!:
+  jsr reset_score
+  jsr reset_bonus
   jsr init_snake_segments
 
   mov #right : snake_direction
   mov #right : old_snake_direction
   mov #0 : snake_tail_segment_offset
   mov #0 : snake_body_segment_char_offset
-  mov #0 : snake_length
+  mov #5 : snake_length
   mov #0 : snake_segments_in_transit
   mov #initial_delay : delay_time
-
-  jsr reset_score
-  jsr draw_banner
 
   jsr draw_initial_snake
   dec snake_tail_segment_offset // ensure snake offsets are correct for the first move
@@ -51,6 +82,11 @@ init:
   jsr draw_orange_portal
   jsr draw_blue_portal
 
+start_game:
+  jsr set_bonus
+  jsr display_bonus
+  jsr draw_banner
+  jsr display_high_score
   jmp game_loop
 
 init_snake_segments:
@@ -64,6 +100,22 @@ init_snake_segments:
   lda #12
   sta snake_segments_y, x
   inx
+  bne !-
+
+  rts
+
+draw_press_fire_to_begin:
+  ldx #0
+  clc
+
+!:
+  lda press_fire_to_begin_text, x
+  adc #128 // use reverse text
+  sta $0400, x
+  lda #RED
+  sta $d800, x
+  inx
+  cpx #40
   bne !-
 
   rts
@@ -91,15 +143,16 @@ game_loop:
   jmp game_loop
 
 reset_score:
-  ldx #0
   lda #0
+  sta score
+  sta score + 1
+  sta score + 2
+  rts
 
-!:
-  sta score, x
-  inx
-  cpx #3
-  bne !-
-
+reset_bonus:
+  lda #0
+  sta bonus
+  sta bonus + 1
   rts
 
 draw_initial_snake:
@@ -107,7 +160,7 @@ draw_initial_snake:
     lda #offset
     sta snake_head_segment_offset
     .var char = offset < 4 ? $43 : head
-    mov #char : snake_segment_char
+    mov #char : char_to_draw
     jsr draw_snake_head
   }
   rts
@@ -115,14 +168,13 @@ draw_initial_snake:
 draw_snake_head:
   lda snake_head_segment_offset
   jsr get_snake_segment_position
-  jsr draw_snake_segment
+  jsr draw_char
   rts
 
 erase_snake_tail:
   lda snake_tail_segment_offset
   jsr get_snake_segment_position
-  mov #space : snake_segment_char
-  jsr draw_snake_segment
+  jsr erase_char
   rts
 
 get_snake_segment_position:
@@ -138,7 +190,7 @@ get_snake_segment_position:
   tax
   rts
 
-draw_snake_segment:
+draw_char:
   lda screen_offsets.lo, x
   sta screen_loc_ptr
   lda screen_offsets.hi, x
@@ -147,11 +199,21 @@ draw_snake_segment:
 
   // we have to use register y to hold the x-value because STA
   // only allows y as the indirect-indexed addressing mode offset
-  lda snake_segment_char
+  lda char_to_draw
   sta (screen_loc_ptr), y
 
   add16 screen_loc_ptr : #$d400
   lda #GREEN
+  sta (screen_loc_ptr), y
+  rts
+
+erase_char:
+  lda screen_offsets.lo, x
+  sta screen_loc_ptr
+  lda screen_offsets.hi, x
+  ora #$04 // add $0400 to the screen offset
+  sta screen_loc_ptr + 1
+  lda #space
   sta (screen_loc_ptr), y
   rts
 
@@ -184,6 +246,8 @@ check_snake_direction:
   rts
 
 move_snake:
+  jsr decrease_bonus
+  jsr display_bonus
   ldx snake_segment_ypos
   ldy snake_segment_xpos
   jsr get_screen_loc_contents
@@ -212,6 +276,8 @@ check_move_snack:
   bne !+
   jsr increase_score
   inc snake_length
+  jsr set_bonus
+  jsr display_bonus
   jsr draw_snake_snack
   jmp check_portal_transit
 
@@ -244,7 +310,7 @@ move_head:
   lda snake_segment_ypos
   sta snake_segments_y, x
 
-  mov #head : snake_segment_char
+  mov #head : char_to_draw
   jsr draw_snake_head
   rts
 
@@ -258,7 +324,7 @@ set_new_snake_segment:
   cmp #up
   bne !+
   jsr get_next_vertical_body_segment
-  // mov #$42 : snake_segment_char
+  // mov #$42 : char_to_draw
   rts
 
 !:
@@ -266,26 +332,26 @@ set_new_snake_segment:
   cmp #down
   bne !+
   jsr get_next_vertical_body_segment
-  // mov #$42 : snake_segment_char
+  // mov #$42 : char_to_draw
   rts
 
 !:
   // left again or right again
   jsr get_next_horizontal_body_segment
-  // mov #$43 : snake_segment_char
+  // mov #$43 : char_to_draw
   rts
 
 get_next_vertical_body_segment:
   ldx snake_body_segment_char_offset
   lda vertical_body_segment_chars, x
-  sta snake_segment_char
+  sta char_to_draw
   jsr inc_body_segment_offset
   rts
 
 get_next_horizontal_body_segment:
   ldx snake_body_segment_char_offset
   lda horizontal_body_segment_chars, x
-  sta snake_segment_char
+  sta char_to_draw
   jsr inc_body_segment_offset
   rts
 
@@ -310,11 +376,11 @@ check_up_left:
   lda old_snake_direction
   cmp #up
   bne !+
-  mov #$49 : snake_segment_char
+  mov #$49 : char_to_draw
   rts
 
 !:
-  mov #$4a : snake_segment_char
+  mov #$4a : char_to_draw
   rts
 
 check_up_right:
@@ -323,11 +389,11 @@ check_up_right:
   lda old_snake_direction
   cmp #up
   bne !+
-  mov #$55 : snake_segment_char
+  mov #$55 : char_to_draw
   rts
 
 !:
-  mov #$4b : snake_segment_char
+  mov #$4b : char_to_draw
   rts
 
 check_down_left:
@@ -336,11 +402,11 @@ check_down_left:
   lda old_snake_direction
   cmp #down
   bne !+
-  mov #$4b : snake_segment_char
+  mov #$4b : char_to_draw
   rts
 
 !:
-  mov #$55 : snake_segment_char
+  mov #$55 : char_to_draw
   rts
 
 check_down_right:
@@ -349,15 +415,15 @@ check_down_right:
   lda old_snake_direction
   cmp #down
   bne !+
-  mov #$4a : snake_segment_char
+  mov #$4a : char_to_draw
   rts
 
 !:
-  mov #$49 : snake_segment_char
+  mov #$49 : char_to_draw
   rts
 
 unknown_snake_direction:
-  mov #$3f : snake_segment_char
+  mov #$3f : char_to_draw
   rts
 
 redraw_portals:
@@ -555,38 +621,101 @@ draw_blue_portal:
 erase_portals:
   ldx blue_portal_y
   ldy blue_portal_x
-  lda screen_offsets.lo, x
-  sta screen_loc_ptr
-  lda screen_offsets.hi, x
-  ora #$04
-  sta screen_loc_ptr + 1
-  lda #space
-  sta (screen_loc_ptr), y
+  jsr erase_char
 
   ldx orange_portal_y
   ldy orange_portal_x
-  lda screen_offsets.lo, x
-  sta screen_loc_ptr
-  lda screen_offsets.hi, x
-  ora #$04
-  sta screen_loc_ptr + 1
-  lda #space
-  sta (screen_loc_ptr), y
+  jsr erase_char
 
   rts
 
+set_bonus:
+  sed // use BCD
+  clc
+
+  lda #50
+  sta bonus
+  lda bonus
+  adc snake_length
+  sta bonus
+  bcc !+
+
+  lda bonus + 1
+  adc #$00
+  sta bonus + 1
+
+  rts
+
+decrease_bonus:
+  // check if the bonus is already 1... if so, don't decrease it again
+  lda bonus
+  eor bonus + 1
+  cmp #$01
+  beq !+
+
+  // bonus > 1, decrease it by 1
+  sed // use BCD
+  sec
+
+  lda bonus
+  sbc #$01
+  sta bonus
+  bcc !+
+
+  lda bonus + 1
+  sbc #$00
+  sta bonus + 1
+
+!:
+  cld
+  rts
+
+display_bonus:
+  ldy #2 // screen offset, starting with the least-significant digit
+  ldx #0 // bonus byte index (0-1)
+
+bonus_loop:
+  // get the lowest 4 bits of the current bonus byte and draw it
+  lda bonus, x
+  and #$0f
+  jsr draw_bonus_digit
+  cpx #1 // we only want the first 3 nybbles; skip the upper 4 bits of the 2nd byte
+  beq !+
+
+  // now do the same thing with the upper 4 bits of the byte
+  lda bonus, x
+  lsr
+  lsr
+  lsr
+  lsr
+  jsr draw_bonus_digit
+
+  inx
+  jmp bonus_loop
+
+!:
+  rts
+
+draw_bonus_digit:
+  clc
+  adc #48 + 128 // "0" through "9", reverse mode
+  sta $0406, y  // screen location for bonus display
+  dey
+  rts
+
 increase_score:
-  sed // we're using BCD for scoring
+  sed // use BCD
   clc
 
   lda score
   adc #$10 // add 10 to the current score
+  adc bonus
   sta score
   bcc !+
 
   dec delay_time
   lda score + 1
-  adc #$00
+  adc bonus + 1
   sta score + 1
   bcc !+
 
@@ -596,9 +725,7 @@ increase_score:
 
 !:
   cld
-
   jsr display_score
-
   rts
 
 display_score:
@@ -609,7 +736,7 @@ score_loop:
   // get the lowest 4 bits of the current score byte and draw it
   lda score, x
   and #$0f
-  jsr draw_digit
+  jsr draw_score_digit
 
   // now do the same thing with the upper 4 bits of the byte
   lda score, x
@@ -617,7 +744,7 @@ score_loop:
   lsr
   lsr
   lsr
-  jsr draw_digit
+  jsr draw_score_digit
 
   inx
   cpx #3
@@ -625,20 +752,21 @@ score_loop:
 
   rts
 
-draw_digit:
+draw_score_digit:
   clc
-  adc #48 + 128 // "0" - "9", reverse mode
+  adc #48 + 128 // "0" through "9", reverse mode
   sta $0422, y  // screen location for score display
   dey
   rts
 
 game_over:
+  jsr check_high_score
   cls(COLOR_RAM, DARK_GRAY)
   ldx #$0
 
 !:
   lda game_over_text, x
-  beq wait_for_fire_button
+  beq wait_for_fire_to_restart
   sta $05ee, x
   lda press_fire_text, x
   sta $063e, x
@@ -648,7 +776,66 @@ game_over:
   inx
   jmp !-
 
-wait_for_fire_button:
+check_high_score:
+  lda score + 2          // compare high bytes
+  cmp high_score + 2
+  bcc no_new_high_score
+  bne set_new_high_score
+  lda score + 1          // compare middle bytes
+  cmp high_score + 1
+  bcc no_new_high_score
+  bne set_new_high_score
+  lda score              // compare low bytes
+  cmp high_score
+  bcc no_new_high_score
+
+set_new_high_score:
+  ldx #0
+
+!:
+  lda score, x
+  sta high_score, x
+  inx
+  cpx #3
+  bne !-
+
+  jsr display_high_score
+
+no_new_high_score:
+  rts
+
+display_high_score:
+  ldy #5 // screen offset, starting with the least-significant digit
+  ldx #0 // high score byte index (0-2)
+
+high_score_loop:
+  // get the lowest 4 bits of the current high score byte and draw it
+  lda high_score, x
+  and #$0f
+  jsr draw_high_score_digit
+
+  // now do the same thing with the upper 4 bits of the byte
+  lda high_score, x
+  lsr
+  lsr
+  lsr
+  lsr
+  jsr draw_high_score_digit
+
+  inx
+  cpx #3
+  bne high_score_loop
+
+  rts
+
+draw_high_score_digit:
+  clc
+  adc #48 + 128 // "0" through "9", reverse mode
+  sta $0412, y  // screen location for score display
+  dey
+  rts
+
+wait_for_fire_to_restart:
   jsr delay
 !:
   lda JOY2

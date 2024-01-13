@@ -2,8 +2,12 @@
 
 .segment Strings "Text"
 
+press_fire_to_begin_text:
+  .text "          PRESS FIRE TO BEGIN!          "
+  .byte 0
+
 banner_text:
-  .text "WELCOME TO SNORTAL!        SCORE: 000000"
+  .text "BONUS:000    HIGH:------    SCORE:000000"
   .byte 0
 
 press_fire_text:
