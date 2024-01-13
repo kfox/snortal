@@ -1,6 +1,5 @@
 .source.txt
 *.bak
 *.dbg
-*.prg
 *.sym
 *.vs
