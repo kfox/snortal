@@ -2,6 +2,14 @@
 
 .segment Strings "Text"
 
+welcome_to_snortal_text:
+  .text "           WELCOME TO SNORTAL           "
+  .byte 0
+
+byline_text:
+  .text "          BY KELLY FOX (C)2024          "
+  .byte 0
+
 press_fire_to_begin_text:
   .text "          PRESS FIRE TO BEGIN!          "
   .byte 0

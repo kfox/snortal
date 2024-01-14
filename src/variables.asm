@@ -17,7 +17,7 @@ score: .byte 0, 0, 0
 high_score: .byte 0, 0, 0
 bonus: .byte 0, 0
 delay_time: .byte 0
-game_mode: .enum {WAIT_FOR_FIRE, PLAY}
+game_mode: .enum {TITLE, PLAY}
 
 .segment Variables "Portals"
 blue_portal_x: .byte 0

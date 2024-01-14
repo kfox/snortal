@@ -4,10 +4,11 @@
 .segmentdef Arrays [startAfter="Code", align=$100]
 .segmentdef Strings [startAfter="Arrays"]
 .segmentdef Variables [startAfter="Strings", virtual]
+.segmentdef Data [startAfter="Variables", align=$100]
 
 .file [
   name="%o.prg",
-  segments="Code,Arrays,Strings",
+  segments="Code,Arrays,Strings,Data",
   modify="BasicUpstart",
   _start=$0840
 ]
@@ -27,10 +28,12 @@
 #import "constants.asm"
 #import "arrays.asm"
 #import "variables.asm"
+#import "data.asm"
+
 
 .segment Code "PreInit"
 pre_init:
-  mov #WAIT_FOR_FIRE : game_mode
+  mov #TITLE : game_mode
 
 load_high_score:
   // TODO: replace this with a disk load routine
@@ -51,11 +54,12 @@ init:
   cls(COLOR_RAM, GREEN)
 
   lda game_mode
-  cmp #WAIT_FOR_FIRE
+  cmp #TITLE
   bne !+
 
   mov #PLAY : game_mode
-  jsr draw_press_fire_to_begin
+  jsr draw_title_screen
+  jsr draw_title_banners
   jmp wait_for_fire_to_restart
 
 !:
@@ -104,20 +108,10 @@ init_snake_segments:
 
   rts
 
-draw_press_fire_to_begin:
-  ldx #0
-  clc
-
-!:
-  lda press_fire_to_begin_text, x
-  adc #128 // use reverse text
-  sta $0400, x
-  lda #RED
-  sta $d800, x
-  inx
-  cpx #40
-  bne !-
-
+draw_title_banners:
+  draw_text(welcome_to_snortal_text, 1024, GREEN, true)
+  draw_text(byline_text, 1064, GREEN, true)
+  draw_text(press_fire_to_begin_text, 1984, RED, true)
   rts
 
 draw_banner:
@@ -134,6 +128,20 @@ draw_banner:
   cpx #40
   bne !-
 
+  rts
+
+draw_title_screen:
+  .for (var offset=$000; offset<=$300; offset+=$100) {
+    ldx #0
+  !:
+    lda title_screen + offset, x
+    sta SCREEN_RAM + offset, x
+    lda title_color + offset, x
+    sta COLOR_RAM + offset, x
+    inx
+    cpx #0
+    bne !-
+  }
   rts
 
 .segment Code "Main"

@@ -14,6 +14,24 @@
   bne !-
 }
 
+.macro draw_text(text, location, color, reverse) {
+  ldx #0
+  clc
+
+!:
+  lda text, x
+  cmp #0
+  beq !+
+  .if (reverse) adc #127 // use "reverse" mode
+  sta location, x
+  lda #color
+  sta location + $d400, x
+  inx
+  jmp !-
+
+!:
+}
+
 .macro rand(min, max) {
   // generates a random-ish number between 0 and max, inclusive
   // semi-"optimized" for max = 24 or max = 39
@@ -40,13 +58,6 @@
   .return CmdArgument(arg.getType(),arg.getValue()+1)
 }
 
-.pseudocommand mov16 source : dest {
-  lda source
-  sta dest
-  lda _16bit_nextArgument(source)
-  sta _16bit_nextArgument(dest)
-}
-
 .pseudocommand add16 arg1 : arg2 : target {
   .if (target.getType()==AT_NONE) .eval target=arg1
   clc
@@ -56,12 +67,4 @@
   lda _16bit_nextArgument(arg1)
   adc _16bit_nextArgument(arg2)
   sta _16bit_nextArgument(target)
-}
-
-.pseudocommand dec16 arg {
-  lda arg
-  bne !+
-  dec _16bit_nextArgument(arg)
-!:
-  dec arg
 }
