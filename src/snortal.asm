@@ -708,7 +708,6 @@ increase_score:
   clc
 
   lda score
-  adc #$10 // add 10 to the current score
   adc bonus
   sta score
   bcc !+
