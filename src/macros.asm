@@ -4,13 +4,13 @@
 
 .macro cls(screen, fillchar) {
   lda #fillchar
-  ldx #0
+  ldx #250
 !:
+  dex
   sta screen, x
-  sta screen + $100, x
-  sta screen + $200, x
-  sta screen + $300, x
-  inx
+  sta screen + 250, x
+  sta screen + 500, x
+  sta screen + 750, x
   bne !-
 }
 
